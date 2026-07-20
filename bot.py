@@ -12,7 +12,9 @@ import asyncio
 import sqlite3
 import time
 
-TOKEN = "YOUR_DISCORD_TOKEN"
+import os
+TOKEN = os.getenv("TOKEN")
+
 
 
 COLOR = 0x8000ff
