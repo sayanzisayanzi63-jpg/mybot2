@@ -1,0 +1,1056 @@
+# =========================================
+# SAYANZI FINAL BOT
+# discord.py 2.x
+# FULL FINAL VERSION
+# =========================================
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+from datetime import timedelta
+import asyncio
+import sqlite3
+import time
+
+TOKEN = "YOUR_DISCORD_TOKEN"
+
+
+COLOR = 0x8000ff
+
+# =========================================
+# BOT
+# =========================================
+
+intents = discord.Intents.all()
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents,
+    case_insensitive=True,
+    help_command=None
+)
+
+# =========================================
+# DATABASE
+# =========================================
+
+db = sqlite3.connect("sayanzi.db")
+cur = db.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS xp(
+guild_id TEXT,
+user_id TEXT,
+messages INTEGER DEFAULT 0,
+day_count INTEGER DEFAULT 0,
+week_count INTEGER DEFAULT 0
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS warns(
+guild_id TEXT,
+user_id TEXT,
+warns INTEGER DEFAULT 0
+)
+""")
+
+db.commit()
+
+# =========================================
+# CACHE
+# =========================================
+
+auto_replies = {}
+protection_words = {}
+spam_cache = {}
+
+# =========================================
+# ADMIN CHECK
+# =========================================
+
+def is_admin(member):
+    return member.guild_permissions.administrator
+
+# =========================================
+# TIME PARSER
+# =========================================
+
+def parse_time(t):
+
+    try:
+
+        value = int(t[:-1])
+        unit = t[-1].lower()
+
+        if unit == "s":
+            return value
+
+        elif unit == "m":
+            return value * 60
+
+        elif unit == "h":
+            return value * 3600
+
+        elif unit == "d":
+            return value * 86400
+
+    except:
+        return None
+
+# =========================================
+# HELP MENU
+# =========================================
+
+class HelpSelect(discord.ui.Select):
+
+    def __init__(self):
+
+        options = [
+
+            discord.SelectOption(
+                label="All members 🔥",
+                description="اوامر الاعضاء"
+            ),
+
+            discord.SelectOption(
+                label="الادارة العليا 👑",
+                description="اوامر الادارة"
+            )
+
+        ]
+
+        super().__init__(
+            placeholder="قائمة أوامر البوت",
+            options=options,
+            custom_id="help_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        if self.values[0] == "All members 🔥":
+
+            embed = discord.Embed(
+                title="🔥 All Members",
+                color=COLOR
+            )
+
+            embed.add_field(
+                name="📌 Commands",
+                value="""
+!xp
+/xp
+
+!level
+/level
+
+!t
+!t day
+!t week
+
+!i
+
+!help
+/commands
+
+!افاتار
+!عضو
+!سيرفر
+
+!سجل
+
+!اقتراح
+""",
+                inline=False
+            )
+
+            await interaction.response.edit_message(
+                embed=embed,
+                view=HelpView()
+            )
+
+        else:
+
+            embed = discord.Embed(
+                title="👑 Admin Commands",
+                color=COLOR
+            )
+
+            embed.add_field(
+                name="🛡 Commands",
+                value="""
+/ban
+/unban
+
+/timeout
+/timeout_remove
+
+/add_role
+/remove_role
+
+/protection
+/protection_remove
+/protection_list
+
+/auto_reply
+/auto_reply_remove
+/auto_reply_list
+
+/message
+
+!clear
+!مسح
+
+!تحذير
+!لاتحذير
+
+!قف
+!فت
+""",
+                inline=False
+            )
+
+            await interaction.response.edit_message(
+                embed=embed,
+                view=HelpView()
+            )
+
+class HelpView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(HelpSelect())
+
+# =========================================
+# SUGGEST SYSTEM
+# =========================================
+
+class SuggestView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(timeout=None)
+
+        self.yes_users = []
+        self.no_users = []
+
+    @discord.ui.button(
+        label="✅ 0",
+        style=discord.ButtonStyle.green
+    )
+    async def yes(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if interaction.user.id in self.yes_users:
+
+            return await interaction.response.send_message(
+                "❌ صوتت بالفعل",
+                ephemeral=True
+            )
+
+        self.yes_users.append(interaction.user.id)
+
+        button.label = f"✅ {len(self.yes_users)}"
+
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(
+        label="❌ 0",
+        style=discord.ButtonStyle.red
+    )
+    async def no(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if interaction.user.id in self.no_users:
+
+            return await interaction.response.send_message(
+                "❌ صوتت بالفعل",
+                ephemeral=True
+            )
+
+        self.no_users.append(interaction.user.id)
+
+        button.label = f"❌ {len(self.no_users)}"
+
+        await interaction.response.edit_message(view=self)
+
+# =========================================
+# READY
+# =========================================
+
+@bot.event
+async def on_ready():
+
+    await bot.tree.sync()
+
+    bot.add_view(HelpView())
+    bot.add_view(SuggestView())
+
+    print(f"✅ Logged in as {bot.user}")
+
+# =========================================
+# MESSAGE EVENT
+# =========================================
+
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    if not message.guild:
+        return
+
+    gid = str(message.guild.id)
+    uid = str(message.author.id)
+
+    # XP
+
+    cur.execute(
+        "SELECT * FROM xp WHERE guild_id=? AND user_id=?",
+        (gid, uid)
+    )
+
+    data = cur.fetchone()
+
+    if data:
+
+        cur.execute("""
+        UPDATE xp
+        SET messages=messages+1,
+        day_count=day_count+1,
+        week_count=week_count+1
+        WHERE guild_id=? AND user_id=?
+        """, (gid, uid))
+
+    else:
+
+        cur.execute("""
+        INSERT INTO xp VALUES(?,?,?,?,?)
+        """, (gid, uid, 1, 1, 1))
+
+    db.commit()
+
+    # AUTO REPLY
+
+    for trigger, reply in auto_replies.items():
+
+        if trigger in message.content.lower():
+
+            embed = discord.Embed(
+                description=reply,
+                color=COLOR
+            )
+
+            await message.channel.send(embed=embed)
+
+    # PROTECTION
+
+    for word, sec in protection_words.items():
+
+        if word in message.content.lower():
+
+            try:
+
+                await message.delete()
+
+                await message.author.timeout(
+                    timedelta(seconds=sec)
+                )
+
+                await message.channel.send(
+                    f"⛔ {message.author.mention} تم إعطاؤه تايم"
+                )
+
+            except:
+                pass
+
+    # ANTI LINKS
+
+    if "http://" in message.content.lower() or "https://" in message.content.lower():
+
+        if not is_admin(message.author):
+
+            try:
+                await message.delete()
+
+                await message.channel.send(
+                    f"🚫 {message.author.mention} الروابط ممنوعة"
+                )
+
+            except:
+                pass
+
+    # ANTI SPAM
+
+    key = (gid, uid)
+
+    spam_cache[key] = spam_cache.get(key, []) + [time.time()]
+
+    spam_cache[key] = [
+        t for t in spam_cache[key]
+        if time.time() - t < 3
+    ]
+
+    if len(spam_cache[key]) >= 5:
+
+        try:
+
+            await message.author.timeout(
+                timedelta(minutes=10),
+                reason="Spam"
+            )
+
+            await message.channel.send(
+                f"⏱ {message.author.mention} سبام"
+            )
+
+        except:
+            pass
+
+        spam_cache[key] = []
+
+    await bot.process_commands(message)
+
+# =========================================
+# HELP
+# =========================================
+
+@bot.command(name="help")
+async def help_command(ctx):
+
+    embed = discord.Embed(
+        title="Best Protection Bot",
+        description="اضغط القائمة لرؤية الأوامر",
+        color=COLOR
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=HelpView()
+    )
+
+@bot.tree.command(name="commands")
+async def commands_list(interaction: discord.Interaction):
+
+    embed = discord.Embed(
+        title="Best Protection Bot",
+        description="اضغط القائمة لرؤية الأوامر",
+        color=COLOR
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=HelpView()
+    )
+
+# =========================================
+# XP
+# =========================================
+
+@bot.command()
+async def xp(ctx):
+
+    gid = str(ctx.guild.id)
+    uid = str(ctx.author.id)
+
+    cur.execute("""
+    SELECT messages FROM xp
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    amount = data[0] if data else 0
+
+    embed = discord.Embed(
+        title="⭐ XP",
+        description=f"```{amount}```",
+        color=COLOR
+    )
+
+    await ctx.send(embed=embed)
+
+@bot.tree.command(name="xp")
+async def slash_xp(interaction: discord.Interaction):
+
+    gid = str(interaction.guild.id)
+    uid = str(interaction.user.id)
+
+    cur.execute("""
+    SELECT messages FROM xp
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    amount = data[0] if data else 0
+
+    embed = discord.Embed(
+        title="⭐ XP",
+        description=f"```{amount}```",
+        color=COLOR
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+# =========================================
+# LEVEL
+# =========================================
+
+@bot.command()
+async def level(ctx):
+
+    gid = str(ctx.guild.id)
+    uid = str(ctx.author.id)
+
+    cur.execute("""
+    SELECT messages FROM xp
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    amount = data[0] if data else 0
+
+    lvl = amount // 50
+
+    embed = discord.Embed(
+        title="📊 LEVEL",
+        description=f"```{lvl}```",
+        color=COLOR
+    )
+
+    await ctx.send(embed=embed)
+
+@bot.tree.command(name="level")
+async def slash_level(interaction: discord.Interaction):
+
+    gid = str(interaction.guild.id)
+    uid = str(interaction.user.id)
+
+    cur.execute("""
+    SELECT messages FROM xp
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    amount = data[0] if data else 0
+
+    lvl = amount // 50
+
+    embed = discord.Embed(
+        title="📊 LEVEL",
+        description=f"```{lvl}```",
+        color=COLOR
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+# =========================================
+# TOP
+# =========================================
+
+@bot.command()
+async def t(ctx, mode=None):
+
+    gid = str(ctx.guild.id)
+
+    column = "messages"
+
+    if mode == "day":
+        column = "day_count"
+
+    elif mode == "week":
+        column = "week_count"
+
+    cur.execute(f"""
+    SELECT user_id, {column}
+    FROM xp
+    WHERE guild_id=?
+    ORDER BY {column} DESC
+    LIMIT 10
+    """, (gid,))
+
+    rows = cur.fetchall()
+
+    embed = discord.Embed(
+        title="🏆 TOP",
+        color=COLOR
+    )
+
+    for i, (uid, count) in enumerate(rows, start=1):
+
+        embed.add_field(
+            name=f"{i}. <@{uid}>",
+            value=f"💬 {count}",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+# =========================================
+# PROFILE
+# =========================================
+
+@bot.command(name="i")
+async def profile(ctx):
+
+    embed = discord.Embed(
+        title=f"{ctx.author.name}",
+        color=COLOR
+    )
+
+    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+
+    await ctx.send(embed=embed)
+
+# =========================================
+# AVATAR
+# =========================================
+
+@bot.command(name="افاتار")
+async def avatar(ctx, member: discord.Member = None):
+
+    member = member or ctx.author
+
+    embed = discord.Embed(
+        title=f"{member.name}",
+        color=COLOR
+    )
+
+    embed.set_image(url=member.display_avatar.url)
+
+    await ctx.send(embed=embed)
+
+# =========================================
+# MEMBER INFO
+# =========================================
+
+@bot.command(name="عضو")
+async def member_info(ctx, member: discord.Member = None):
+
+    member = member or ctx.author
+
+    embed = discord.Embed(
+        title=f"{member}",
+        color=COLOR
+    )
+
+    embed.add_field(
+        name="👑 Rank",
+        value=member.top_role.mention
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================================
+# SERVER INFO
+# =========================================
+
+@bot.command(name="سيرفر")
+async def server_info(ctx):
+
+    guild = ctx.guild
+
+    embed = discord.Embed(
+        title="🖥 Server",
+        color=COLOR
+    )
+
+    embed.add_field(
+        name="👥 Members",
+        value=guild.member_count
+    )
+
+    await ctx.send(embed=embed)
+
+# =========================================
+# WARNS
+# =========================================
+
+@bot.command(name="تحذير")
+async def warn(ctx, member: discord.Member):
+
+    if not is_admin(ctx.author):
+        return
+
+    gid = str(ctx.guild.id)
+    uid = str(member.id)
+
+    cur.execute("""
+    SELECT warns FROM warns
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    if data:
+
+        cur.execute("""
+        UPDATE warns
+        SET warns=warns+1
+        WHERE guild_id=? AND user_id=?
+        """, (gid, uid))
+
+    else:
+
+        cur.execute("""
+        INSERT INTO warns VALUES(?,?,?)
+        """, (gid, uid, 1))
+
+    db.commit()
+
+    await ctx.send(f"⚠ تم تحذير {member.mention}")
+
+@bot.command(name="لاتحذير")
+async def unwarn(ctx, member: discord.Member):
+
+    if not is_admin(ctx.author):
+        return
+
+    gid = str(ctx.guild.id)
+    uid = str(member.id)
+
+    cur.execute("""
+    UPDATE warns
+    SET warns = CASE
+        WHEN warns > 0 THEN warns - 1
+        ELSE 0
+    END
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    db.commit()
+
+    await ctx.send(f"✅ تمت إزالة تحذير من {member.mention}")
+
+@bot.command(name="سجل")
+async def warns_log(ctx, member: discord.Member = None):
+
+    member = member or ctx.author
+
+    gid = str(ctx.guild.id)
+    uid = str(member.id)
+
+    cur.execute("""
+    SELECT warns FROM warns
+    WHERE guild_id=? AND user_id=?
+    """, (gid, uid))
+
+    data = cur.fetchone()
+
+    warns = data[0] if data else 0
+
+    await ctx.send(
+        f"⚠ {member.mention} لديه `{warns}` تحذير"
+    )
+
+# =========================================
+# CLEAR
+# =========================================
+
+@bot.command(name="clear", aliases=["مسح"])
+async def clear(ctx, amount: int):
+
+    if not is_admin(ctx.author):
+        return
+
+    await ctx.channel.purge(limit=amount + 1)
+
+# =========================================
+# LOCK / UNLOCK
+# =========================================
+
+@bot.command(name="قف")
+async def lock(ctx):
+
+    if not is_admin(ctx.author):
+        return
+
+    overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrite.send_messages = False
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        overwrite=overwrite
+    )
+
+    await ctx.send("🔒 تم قفل الشات")
+
+@bot.command(name="فت")
+async def unlock(ctx):
+
+    if not is_admin(ctx.author):
+        return
+
+    overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrite.send_messages = True
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        overwrite=overwrite
+    )
+
+    await ctx.send("🔓 تم فتح الشات")
+
+# =========================================
+# SUGGEST
+# =========================================
+
+@bot.command(name="اقتراح")
+async def suggest(ctx, *, text):
+
+    embed = discord.Embed(
+        title="💡 اقتراح",
+        description=text,
+        color=COLOR
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=SuggestView()
+    )
+
+# =========================================
+# ADMIN SLASH
+# =========================================
+
+@bot.tree.command(name="ban")
+async def ban(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    await member.ban()
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="unban")
+async def unban(
+    interaction: discord.Interaction,
+    user_id: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    user = await bot.fetch_user(int(user_id))
+
+    await interaction.guild.unban(user)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="timeout")
+async def timeout(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    time: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    seconds = parse_time(time)
+
+    if not seconds:
+        return
+
+    await member.timeout(
+        timedelta(seconds=seconds)
+    )
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="timeout_remove")
+async def timeout_remove(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    await member.timeout(None)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="add_role")
+async def add_role(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    role: discord.Role
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    await member.add_roles(role)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="remove_role")
+async def remove_role(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    role: discord.Role
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    await member.remove_roles(role)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="message")
+async def message(
+    interaction: discord.Interaction,
+    text: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    embed = discord.Embed(
+        description=text,
+        color=COLOR
+    )
+
+    await interaction.channel.send(embed=embed)
+
+    await interaction.response.send_message(
+        "✅ تم",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="protection")
+async def protection(
+    interaction: discord.Interaction,
+    word: str,
+    time: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    seconds = parse_time(time)
+
+    if not seconds:
+        return
+
+    protection_words[word.lower()] = seconds
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="protection_remove")
+async def protection_remove(
+    interaction: discord.Interaction,
+    word: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    protection_words.pop(word.lower(), None)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="protection_list")
+async def protection_list(interaction: discord.Interaction):
+
+    if not is_admin(interaction.user):
+        return
+
+    if not protection_words:
+
+        return await interaction.response.send_message(
+            "❌ لا توجد كلمات"
+        )
+
+    text = ""
+
+    for word, sec in protection_words.items():
+
+        text += f"🔹 {word} = {sec}s\n"
+
+    embed = discord.Embed(
+        title="🛡 Protection List",
+        description=text,
+        color=COLOR
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+@bot.tree.command(name="auto_reply")
+async def auto_reply(
+    interaction: discord.Interaction,
+    trigger: str,
+    reply: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    auto_replies[trigger.lower()] = reply
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="auto_reply_remove")
+async def auto_reply_remove(
+    interaction: discord.Interaction,
+    trigger: str
+):
+
+    if not is_admin(interaction.user):
+        return
+
+    auto_replies.pop(trigger.lower(), None)
+
+    await interaction.response.send_message("✅ تم")
+
+@bot.tree.command(name="auto_reply_list")
+async def auto_reply_list(interaction: discord.Interaction):
+
+    if not is_admin(interaction.user):
+        return
+
+    if not auto_replies:
+
+        return await interaction.response.send_message(
+            "❌ لا توجد ردود"
+        )
+
+    text = ""
+
+    for trigger, reply in auto_replies.items():
+
+        text += f"🔹 {trigger} => {reply}\n"
+
+    embed = discord.Embed(
+        title="🤖 Auto Replies",
+        description=text,
+        color=COLOR
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+# =========================================
+# RUN
+# =========================================
+
+bot.run(TOKEN)
