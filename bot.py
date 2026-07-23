@@ -69,11 +69,30 @@ spam_cache = {}
 # ADMIN & HIERARCHY CHECK
 # =========================================
 
-def is_admin(member):
-    return member.guild_permissions.administrator
+def is_admin(interaction_or_member, guild=None):
+    if isinstance(interaction_or_member, discord.Interaction):
+        user = interaction_or_member.user
+        g = interaction_or_member.guild
+    else:
+        user = interaction_or_member
+        g = guild
+
+    if not g:
+        return False
+    
+    # السماح لمالك السيرفر دائماً
+    if user.id == g.owner_id:
+        return True
+
+    # تحويل الكائن إلى Member إذا كان User عادياً لضمان قراءة الصلاحيات
+    member = g.get_member(user.id)
+    if member and member.guild_permissions.administrator:
+        return True
+        
+    return False
 
 async def check_admin_and_hierarchy(interaction: discord.Interaction, member: discord.Member = None):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -90,7 +109,7 @@ async def check_admin_and_hierarchy(interaction: discord.Interaction, member: di
             await interaction.response.send_message("❌ رتبته اعلى من رتبتي!", ephemeral=True)
             return False
 
-        if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        if member.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
             try:
                 await interaction.user.send("❌ رتبته اعلى من رتبتك!")
             except:
@@ -371,7 +390,7 @@ async def on_message(message):
     # ANTI LINKS
 
     if "http://" in message.content.lower() or "https://" in message.content.lower():
-        if not is_admin(message.author):
+        if not is_admin(message.author, message.guild):
             try:
                 await message.delete()
                 await message.channel.send(
@@ -662,7 +681,7 @@ async def server_info(ctx):
 
 @bot.command(name="تحذير")
 async def warn(ctx, member: discord.Member):
-    if not is_admin(ctx.author):
+    if not is_admin(ctx.author, ctx.guild):
         try:
             await ctx.author.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -676,7 +695,7 @@ async def warn(ctx, member: discord.Member):
             pass
         return await ctx.send("❌ رتبته اعلى من رتبتي!")
 
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+    if member.top_role >= ctx.author.top_role and ctx.author.id != ctx.guild.owner_id:
         try:
             await ctx.author.send("❌ رتبته اعلى من رتبتك!")
         except:
@@ -709,7 +728,7 @@ async def warn(ctx, member: discord.Member):
 
 @bot.command(name="لاتحذير")
 async def unwarn(ctx, member: discord.Member):
-    if not is_admin(ctx.author):
+    if not is_admin(ctx.author, ctx.guild):
         try:
             await ctx.author.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -755,7 +774,7 @@ async def warns_log(ctx, member: discord.Member = None):
 
 @bot.command(name="clear", aliases=["مسح"])
 async def clear(ctx, amount: int):
-    if not is_admin(ctx.author):
+    if not is_admin(ctx.author, ctx.guild):
         try:
             await ctx.author.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -770,7 +789,7 @@ async def clear(ctx, amount: int):
 
 @bot.command(name="قف")
 async def lock(ctx):
-    if not is_admin(ctx.author):
+    if not is_admin(ctx.author, ctx.guild):
         try:
             await ctx.author.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -788,7 +807,7 @@ async def lock(ctx):
 
 @bot.command(name="فت")
 async def unlock(ctx):
-    if not is_admin(ctx.author):
+    if not is_admin(ctx.author, ctx.guild):
         try:
             await ctx.author.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -840,7 +859,7 @@ async def unban(
     interaction: discord.Interaction,
     user_id: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -923,7 +942,7 @@ async def message(
     interaction: discord.Interaction,
     text: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -946,7 +965,7 @@ async def protection(
     word: str,
     time: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -965,7 +984,7 @@ async def protection_remove(
     interaction: discord.Interaction,
     word: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -977,7 +996,7 @@ async def protection_remove(
 
 @bot.tree.command(name="protection_list")
 async def protection_list(interaction: discord.Interaction):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -1008,7 +1027,7 @@ async def auto_reply(
     trigger: str,
     reply: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -1023,7 +1042,7 @@ async def auto_reply_remove(
     interaction: discord.Interaction,
     trigger: str
 ):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
@@ -1035,12 +1054,12 @@ async def auto_reply_remove(
 
 @bot.tree.command(name="auto_reply_list")
 async def auto_reply_list(interaction: discord.Interaction):
-    if not is_admin(interaction.user):
+    if not is_admin(interaction):
         try:
             await interaction.user.send("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.")
         except:
             pass
-        return await.response.send_message("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.", ephemeral=True)
+        return await interaction.response.send_message("❌ لا يمكنك فعل ذلك، ليس لديك صلاحية Administrator.", ephemeral=True)
 
     if not auto_replies:
         return await interaction.response.send_message(
